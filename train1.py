@@ -21,14 +21,18 @@ from utils import *
 from models import *
 from datasets import *
 
+os.environ['CUDA_VISIBLE_DEVICES']='3'
+device = torch.device('cuda')
 
 if __name__ == "__main__":
+
+
     img_save_path = 'images'
     os.makedirs(img_save_path, exist_ok=True)
 
     parser = argparse.ArgumentParser()
     parser.add_argument('--n_epochs', type=int, default=200, help='number of epochs of training')
-    parser.add_argument('--batch_size', type=int, default=64, help='size of the batches')
+    parser.add_argument('--batch_size', type=int, default=32 , help='size of the batches')
     parser.add_argument('--lr', type=float, default=0.0002, help='adam: learning rate')
     parser.add_argument('--beta1', type=float, default=0.5, help='adam: decay of first order momentum of gradient')
     parser.add_argument('--beta2', type=float, default=0.999, help='adam: decay of second order momentum of gradient')
@@ -44,15 +48,18 @@ if __name__ == "__main__":
     C,H,W = args.channels, args.img_size, args.img_size
 
     # Loss function
-    adversarial_loss = torch.nn.BCELoss()
+    adversarial_loss = torch.nn.MSELoss()
     # Initialize Generator and discriminator
-    generator = Generator()
-    discriminator = Discriminator()
+    generator = Generator(H,W)
+    discriminator = Discriminator(H,W)
 
     if torch.cuda.is_available():
-        generator.cuda()
-        discriminator.cuda()
-        adversarial_loss.cuda()
+        # generator.cuda()
+        # discriminator.cuda()
+        # adversarial_loss.cuda()
+        generator = generator.to(device)
+        discriminator = discriminator.to(device)
+        adversarial_loss = adversarial_loss.to(device)
 
     # Initialize weights
     generator.apply(weights_init_normal)
@@ -137,10 +144,10 @@ if __name__ == "__main__":
             optimizer_G.step()
 
 
-            print ("[Epoch %d/%d] [Batch %d/%d] [D loss: %f] [G loss: %f]" % (epoch, args.n_epochs, i, len(dataloader),
+            print ("[Epoch %d/%d] [Batch %d/%d] [D loss: %f] [G loss: %f]" % (epoch, args.n_epochs, i, len(train_dataloader),
                                                                 d_loss.data.cpu(), g_loss.data.cpu()))
 
-            batches_done = epoch * len(dataloader) + i
+            batches_done = epoch * len(train_dataloader) + i
             if batches_done % args.sample_interval == 0:
                 noise = Variable(torch.FloatTensor(np.random.normal(0, 1, (N_Class**2, args.latent_dim))).cuda())
                 #fixed labels
