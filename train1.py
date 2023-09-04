@@ -136,8 +136,8 @@ if __name__ == "__main__":
             gen_loss.backward()
             gen_optimizer.step()
 
-            disc_loss_list.append(disc_loss)
-            gene_loss_list.append(gen_loss)
+            disc_loss_list.append(disc_loss.cpu().detach().numpy())
+            gene_loss_list.append(gen_loss.cpu().detach().numpy())
 
             # 将数据展平为 [batch_size, 1*256*256]
             # real_images = real_images.view(-1, 1 * img_size * img_size)     # torch.Size([batch_size, 65536])
@@ -180,7 +180,7 @@ if __name__ == "__main__":
             # gen_optimizer.step()
 
         # 打印训练信息
-        print(f"Epoch [{epoch + 1}/{num_epochs}] | d_loss: {disc_loss_list.mean():.4f} | g_loss: {gene_loss_list.mean():.4f}")
+        print(f"Epoch [{epoch + 1}/{num_epochs}] | d_loss: {np.mean(disc_loss_list):.4f} | g_loss: {np.mean(gene_loss_list):.4f}")
 
     # 保存生成器模型
     torch.save(generator.state_dict(), 'generator.pth')
