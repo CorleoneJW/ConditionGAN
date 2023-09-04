@@ -99,7 +99,7 @@ def get_parse():
     parse.add_argument("--fp16", type=bool, default=False)
 
     parse.add_argument("--ema_rate", type=str, default="0.9999")
-    parse.add_argument("--device", type=tuple, default=['cuda:2','cuda:3'])
+    parse.add_argument("--device", type=tuple, default=['cuda:3'])
     parse.add_argument("--sampling_timesteps", type=int, default=60)
     # objective
     parse.add_argument("--beta_schedule", type=str, default='cosine', help="'cosine' or 'linear'")
