@@ -45,13 +45,18 @@ class PaireDataset(Dataset):
             self.files.extend(list(files.values()))
 
     def __getitem__(self, index):
-        file_A, file_B = self.files[index]
-        img_A = np.load(file_A).astype(np.float32)
-        img_B = np.load(file_B).astype(np.float32)
+        try:
+            file_A, file_B = self.files[index]
+            img_A = np.load(file_A).astype(np.float32)
+            img_B = np.load(file_B).astype(np.float32)
 
-        if self.transform:
-            img_A = self.transform(img_A)
-            img_B = self.transform(img_B)
+            if self.transform:
+                img_A = self.transform(img_A)
+                img_B = self.transform(img_B)
+        except:
+            print("file_A",file_A)
+            print("Aimg",img_A)
+            # print("B",file_B)
 
         return img_A, img_B
 
