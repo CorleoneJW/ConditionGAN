@@ -230,7 +230,6 @@ if __name__ == "__main__":
             image_id+=1
 
         # 计算每个epoch的平均值
-        print(gene_loss_list)
         avg_disc_loss = np.mean(disc_loss_list)
         avg_gene_loss = np.mean(gene_loss_list)
         avg_ssim = np.mean(ssim_list)
