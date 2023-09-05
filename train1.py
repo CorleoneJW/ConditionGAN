@@ -15,13 +15,13 @@ from torch.autograd import Variable
 import torch.nn as nn
 import torch.nn.functional as F
 import torch
-
+from tqdm import tqdm
 
 from utils import *
 from models import *
 from datasets import *
 
-os.environ['CUDA_VISIBLE_DEVICES']='3'
+os.environ['CUDA_VISIBLE_DEVICES']='2'
 device = torch.device('cuda')
 
 if __name__ == "__main__":
@@ -32,7 +32,7 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
     parser.add_argument('--n_epochs', type=int, default=200, help='number of epochs of training')
-    parser.add_argument('--batch_size', type=int, default=16 , help='size of the batches')
+    parser.add_argument('--batch_size', type=int, default=32 , help='size of the batches')
     parser.add_argument('--lr', type=float, default=0.0002, help='adam: learning rate')
     parser.add_argument('--beta1', type=float, default=0.5, help='adam: decay of first order momentum of gradient')
     parser.add_argument('--beta2', type=float, default=0.999, help='adam: decay of second order momentum of gradient')
@@ -99,7 +99,7 @@ if __name__ == "__main__":
     for epoch in range(num_epochs):
         disc_loss_list = []
         gene_loss_list = []
-        for i, (imgs, labels) in enumerate(train_dataloader):
+        for i, (imgs, labels) in enumerate(tqdm(train_dataloader)):
             real_images = imgs
             real_images = real_images.to(device)
             labels = labels.to(device)
