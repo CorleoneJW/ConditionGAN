@@ -7,10 +7,13 @@ import torchvision.transforms as transforms
 from torchvision.utils import save_image
 from torchvision.transforms import Compose
 from skimage.transform import resize
+from skimage.metrics import structural_similarity as ssim
+from sklearn.metrics import mean_squared_error, mean_absolute_error
 
 from torch.utils.data import DataLoader, random_split
 from torchvision import datasets
-from torch.autograd import Variable
+from torch.autograd import variable
+import cv2
 
 import torch.nn as nn
 import torch.nn.functional as F
@@ -62,6 +65,7 @@ if __name__ == "__main__":
         generator = generator.to(device)
         discriminator = discriminator.to(device)
         criterion = criterion.to(device)
+        print("GPU loaded.")
 
     # Initialize weights
     generator.apply(weights_init_normal)
@@ -96,28 +100,40 @@ if __name__ == "__main__":
     #Start training
     batches_done=0
     num_epochs = args.n_epochs
+    total_disc_loss = []
+    total_gene_loss = []
+    total_mse_trian = []
+    total_mse_val = []
+    image_total_size = img_size*img_size
     for epoch in range(num_epochs):
+
+        """
+        Trian part
+        """
         disc_loss_list = []
         gene_loss_list = []
-        for i, (imgs, labels) in enumerate(tqdm(train_dataloader)):
-            real_images = imgs
-            real_images = real_images.to(device)
-            labels = labels.to(device)
+        ssim_list = []  # 存储每个batch的SSIM值
+        mse_list = []   # 存储每个batch的MSE值
+        mae_list = []   # 存储每个batch的MAE值
+        psnr_list = []  # 存储每个batch的PSNR值
+        generator.train()
+        for i, (cbct, ct) in enumerate(tqdm(train_dataloader)):
+            cbct = cbct.to(device)
+            ct = ct.to(device)
 
+            """
+            Train discriminator
+            """
             disc_optimizer.zero_grad()
-
             # 真实图像的标签为1
-            valid = torch.ones(real_images.size(0), 1).to(device)
-
-            # 生成器生成图像
-            z = torch.randn(real_images.size(0), latent_dim).to(device)
-            gen_images = generator(z)
-
+            valid = torch.ones(ct.size(0), 1).to(device)
             # 生成图像的标签为0
-            fake = torch.zeros(real_images.size(0), 1).to(device)
-
+            fake = torch.zeros(ct.size(0), 1).to(device)
+            # 生成器生成图像
+            z = torch.randn(ct.size(0), latent_dim).to(device)
+            gen_images = generator(z, cbct)
             # 判别器对真实图像的损失
-            real_loss = criterion(discriminator(real_images), valid)
+            real_loss = criterion(discriminator(ct), valid)
             # 判别器对生成图像的损失
             fake_loss = criterion(discriminator(gen_images.detach()), fake)
             # 判别器总损失
@@ -126,11 +142,13 @@ if __name__ == "__main__":
             disc_loss.backward()
             disc_optimizer.step()
 
-             # 训练生成器
+            """
+            Train generator
+            """
             gen_optimizer.zero_grad()
 
             # 生成器生成图像并将其输入判别器
-            gen_images = generator(z)
+            gen_images = generator(z, cbct)
             gen_loss = criterion(discriminator(gen_images), valid)
 
             gen_loss.backward()
@@ -139,49 +157,86 @@ if __name__ == "__main__":
             disc_loss_list.append(disc_loss.cpu().detach().numpy())
             gene_loss_list.append(gen_loss.cpu().detach().numpy())
 
-            # 将数据展平为 [batch_size, 1*256*256]
-            # real_images = real_images.view(-1, 1 * img_size * img_size)     # torch.Size([batch_size, 65536])
+            # 计算 SSIM、MSE、MAE 和 PSNR
+            for j in range(ct.size(0)):
+                ct_image = ct[j].squeeze().cpu().detach().numpy()
+                gen_image = gen_images[j].squeeze().cpu().detach().numpy()
+                # 计算 SSIM
+                ssim_value = ssim(ct_image, gen_image, data_range=ct_image.max() - ct_image.min())
+                # 计算 MSE
+                mse_value = mean_squared_error(ct_image, gen_image)
+                # 计算 MAE
+                mae_value = mean_absolute_error(ct_image, gen_image)
+                # 计算 PSNR
+                psnr_value = cv2.PSNR(ct_image, gen_image)
+                # 添加到对应list中
+                ssim_list.append(ssim_value)
+                mse_list.append(mse_value)
+                mae_list.append(mae_value)
+                psnr_list.append(psnr_value)
 
-            # 创建条件向量 [batch_size, num_classes]，并将其与输入连接
-            # label_one_hot = torch.zeros(batch_size, C)
-            # label_one_hot[range(batch_size), labels] = 1.0
-            # label_one_hot = label_one_hot.float()
-            # input_data = torch.cat([real_images, label_one_hot], dim=1)
+        # 计算每个epoch的平均值
+        avg_disc_loss = np.mean(disc_loss_list)
+        avg_gene_loss = np.mean(gene_loss_list)
+        avg_ssim = np.mean(ssim_list)
+        avg_mse = np.mean(mse_list)/(image_total_size)
+        avg_mae = np.mean(mae_list)
+        avg_psnr = np.mean(psnr_list)
 
-            # 训练判别器
-            # disc_optimizer.zero_grad()
-            # real_labels = torch.ones(batch_size, 1)
-            # fake_labels = torch.zeros(batch_size, 1)
+        total_disc_loss.append(avg_disc_loss)
+        total_gene_loss.append(avg_gene_loss)
+        total_mse_trian.append(avg_mse)
 
-            # 使用真实图像计算判别器损失
-            # real_outputs = discriminator(input_data)
-            # real_loss = criterion(real_outputs, real_labels)
-            # real_loss.backward()
+        # 打印训练信息，包括SSIM、MSE、MAE和PSNR
+        print(f"Epoch [{epoch + 1}/{num_epochs}] | d_loss: {avg_disc_loss:.4f} | g_loss: {avg_gene_loss:.4f} | SSIM: {avg_ssim:.4f} | MSE: {avg_mse:.4f} | MAE: {avg_mae:.4f} | PSNR: {avg_psnr:.4f}")
 
-            # 使用生成的图像计算判别器损失
-            # z = torch.randn(batch_size, latent_dim)
-            # fake_images = generator(torch.cat([z, label_one_hot], dim=1))
-            # fake_inputs = torch.cat([fake_images, label_one_hot], dim=1)
-            # fake_outputs = discriminator(fake_inputs.detach())
-            # fake_loss = criterion(fake_outputs, fake_labels)
-            # fake_loss.backward()
+        """
+        validate part
+        """
+        ssim_list_val = []  # 存储每个batch的SSIM值
+        mse_list_val = []   # 存储每个batch的MSE值
+        mae_list_val = []   # 存储每个batch的MAE值
+        psnr_list_val = []  # 存储每个batch的PSNR值
+        # set eval mode
+        generator.eval()
+        with torch.no_grad():
+            for i, (cbct, ct) in enumerate(tqdm(val_dataloader)):
+                cbct = cbct.to(device)
+                ct = ct.to(device)
 
-            # 更新判别器权重
-            # disc_optimizer.step()
-            # total_disc_loss = real_loss + fake_loss
+                """
+                validate generator
+                """
+                # 生成器生成图像
+                z = torch.randn(ct.size(0), latent_dim).to(device)
+                gen_images = generator(z, cbct)
 
-            # 训练生成器
-            # gen_optimizer.zero_grad()
-            # fake_outputs = discriminator(torch.cat([fake_images, label_one_hot], dim=1))
-            # gen_loss = criterion(fake_outputs, real_labels)
-            # gen_loss.backward()
+                # 计算 SSIM、MSE、MAE 和 PSNR
+                for j in range(ct.size(0)):
+                    ct_image = ct[j].squeeze().cpu().detach().numpy()
+                    gen_image = gen_images[j].squeeze().cpu().detach().numpy()
+                    # 计算 SSIM
+                    ssim_value = ssim(ct_image, gen_image, data_range=ct_image.max() - ct_image.min())
+                    # 计算 MSE
+                    mse_value = mean_squared_error(ct_image, gen_image)
+                    # 计算 MAE
+                    mae_value = mean_absolute_error(ct_image, gen_image)
+                    # 计算 PSNR
+                    psnr_value = cv2.PSNR(ct_image, gen_image)
+                    # 添加到对应list中
+                    ssim_list_val.append(ssim_value)
+                    mse_list_val.append(mse_value)/(image_total_size)
+                    mae_list_val.append(mae_value)
+                    psnr_list_val.append(psnr_value)
 
-            # 更新生成器权重
-            # gen_optimizer.step()
+            avg_val_ssim = np.mean(ssim_list_val)
+            avg_val_mse = np.mean(mse_list_val)
+            avg_val_mae = np.mean(mae_list_val)
+            avg_val_psnr = np.mean(psnr_list_val)
+            # 打印训练和验证信息，包括SSIM、MSE、MAE和PSNR
+            print(f"Epoch [{epoch + 1}/{num_epochs}] | Validation SSIM: {avg_val_ssim:.4f} | Validation MSE: {avg_val_mse:.4f} | Validation MAE: {avg_val_mae:.4f} | Validation PSNR: {avg_val_psnr:.4f}")
 
-        # 打印训练信息
-        print(f"Epoch [{epoch + 1}/{num_epochs}] | d_loss: {np.mean(disc_loss_list):.4f} | g_loss: {np.mean(gene_loss_list):.4f}")
-
-    # 保存生成器模型
-    torch.save(generator.state_dict(), 'generator.pth')
-    torch.save(discriminator.state_dict(), 'discriminator.pth')
+        # 保存生成器模型
+        # if 
+        #     torch.save(generator.state_dict(), './models/generator.pth')
+        #     torch.save(discriminator.state_dict(), './models/discriminator.pth')
