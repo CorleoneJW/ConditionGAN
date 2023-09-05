@@ -15,6 +15,8 @@ from torch.utils.data import DataLoader, random_split
 from torchvision import datasets
 from torch.autograd import variable
 import cv2
+from torchvision.utils import save_image
+
 
 import torch.nn as nn
 import torch.nn.functional as F
@@ -39,6 +41,14 @@ if __name__ == "__main__":
     os.makedirs(img_save_path, exist_ok=True)
     os.makedirs(logging_path, exist_ok=True)
     os.makedirs(models_path, exist_ok=True)
+
+    # 清空图片文件夹
+    for filename in os.listdir(img_save_path):
+        file_path = os.path.join(img_save_path, filename)
+        # 检查文件是否是图片（这里假设只清空 .jpg 和 .png 文件）
+        if file_path.endswith(('.jpg', '.png')):
+            # 删除文件
+            os.remove(file_path)
 
     # 创建一个用于训练的logger
     train_logger = logging.getLogger("train_logger")
@@ -70,7 +80,7 @@ if __name__ == "__main__":
             pass
 
     parser = argparse.ArgumentParser()
-    parser.add_argument('--n_epochs', type=int, default=200, help='number of epochs of training')
+    parser.add_argument('--n_epochs', type=int, default=10, help='number of epochs of training')
     parser.add_argument('--batch_size', type=int, default=128 , help='size of the batches')
     parser.add_argument('--lr', type=float, default=0.001, help='adam: learning rate')
     parser.add_argument('--beta1', type=float, default=0.5, help='adam: decay of first order momentum of gradient')
@@ -142,6 +152,7 @@ if __name__ == "__main__":
     total_mse_val = []
     best_mse = 999999
     image_total_size = img_size*img_size
+    image_id = 0
     for epoch in range(num_epochs):
 
         """
@@ -185,14 +196,12 @@ if __name__ == "__main__":
             """
             Train generator
             """
-            gen_optimizer.zero_grad()
+            gen_optimizer.zero_grad() 
 
             gen_loss = criterion(discriminator(gen_images), valid)
 
             gen_loss.backward()
             gen_optimizer.step()
-
-            print(disc_loss)
             disc_loss_list.append(disc_loss.cpu().detach().numpy())
             gene_loss_list.append(gen_loss.cpu().detach().numpy())
 
@@ -214,7 +223,14 @@ if __name__ == "__main__":
                 mae_list.append(mae_value)
                 psnr_list.append(psnr_value)
 
+            temp_ct = ct[0]
+            temp_img = gen_images[0]
+            save_image(temp_ct,os.path.join(img_save_path,str(image_id)+"_ct.png"))
+            save_image(temp_img,os.path.join(img_save_path,str(image_id)+"_genct.png"))
+            image_id+=1
+
         # 计算每个epoch的平均值
+        print(gene_loss_list)
         avg_disc_loss = np.mean(disc_loss_list)
         avg_gene_loss = np.mean(gene_loss_list)
         avg_ssim = np.mean(ssim_list)
@@ -274,13 +290,16 @@ if __name__ == "__main__":
             avg_val_mse = np.mean(mse_list_val)/(image_total_size)
             avg_val_mae = np.mean(mae_list_val)
             avg_val_psnr = np.mean(psnr_list_val)
+
+            total_mse_val.append(avg_val_mse)
+
             # 打印训练和验证信息，包括SSIM、MSE、MAE和PSNR
             val_log_info = f"Epoch [{epoch + 1}/{num_epochs}] | Validation SSIM: {avg_val_ssim:.4f} | Validation MSE: {avg_val_mse:.4f} | Validation MAE: {avg_val_mae:.4f} | Validation PSNR: {avg_val_psnr:.4f}"
             print(val_log_info)
             val_logger.info(val_log_info)
 
             # 保存模型
-            if avg_val_mse <best_mse:
+            if avg_val_mse < best_mse:
                 best_mse = avg_val_mse
                 torch.save(generator.state_dict(), './models/generator_mse.pth')
                 torch.save(discriminator.state_dict(), './models/discriminator_mse.pth')
