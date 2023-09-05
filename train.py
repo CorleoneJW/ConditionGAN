@@ -9,6 +9,7 @@ from torchvision.transforms import Compose
 from skimage.transform import resize
 from skimage.metrics import structural_similarity as ssim
 from sklearn.metrics import mean_squared_error, mean_absolute_error
+import torch.nn.init as init
 
 from torch.utils.data import DataLoader, random_split
 from torchvision import datasets
@@ -23,20 +24,55 @@ from tqdm import tqdm
 from utils import *
 from models import *
 from datasets import *
+import logging
+import random
 
 os.environ['CUDA_VISIBLE_DEVICES']='2'
 device = torch.device('cuda')
+random.seed(666)
 
 if __name__ == "__main__":
 
-
+    models_path = 'models'
+    logging_path = 'logs'
     img_save_path = 'images'
     os.makedirs(img_save_path, exist_ok=True)
+    os.makedirs(logging_path, exist_ok=True)
+    os.makedirs(models_path, exist_ok=True)
+
+    # 创建一个用于训练的logger
+    train_logger = logging.getLogger("train_logger")
+    train_logger.setLevel(logging.INFO)
+    train_log_path = os.path.join(logging_path, 'train.log')
+    train_handler = logging.FileHandler(train_log_path)
+    train_formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+    train_handler.setFormatter(train_formatter)
+    train_logger.addHandler(train_handler)
+
+    # 创建一个用于验证的logger
+    val_logger = logging.getLogger("val_logger")
+    val_logger.setLevel(logging.INFO)
+    val_log_path = os.path.join(logging_path, "validation.log")
+    val_handler = logging.FileHandler(val_log_path)
+    val_formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+    val_handler.setFormatter(val_formatter)
+    val_logger.addHandler(val_handler)
+
+    # 清空log文件
+    if os.path.exists(train_log_path):
+    # 打开log文件并以写入模式打开，这会清空文件内容
+        with open(train_log_path, 'w') as log_file:
+            pass
+
+    if os.path.exists(val_log_path):
+    # 打开log文件并以写入模式打开，这会清空文件内容
+        with open(val_log_path, 'w') as log_file:
+            pass
 
     parser = argparse.ArgumentParser()
     parser.add_argument('--n_epochs', type=int, default=200, help='number of epochs of training')
-    parser.add_argument('--batch_size', type=int, default=32 , help='size of the batches')
-    parser.add_argument('--lr', type=float, default=0.0002, help='adam: learning rate')
+    parser.add_argument('--batch_size', type=int, default=128 , help='size of the batches')
+    parser.add_argument('--lr', type=float, default=0.001, help='adam: learning rate')
     parser.add_argument('--beta1', type=float, default=0.5, help='adam: decay of first order momentum of gradient')
     parser.add_argument('--beta2', type=float, default=0.999, help='adam: decay of second order momentum of gradient')
     parser.add_argument('--n_cpu', type=int, default=8, help='number of cpu threads to use during batch generation')
@@ -73,7 +109,7 @@ if __name__ == "__main__":
 
     # Define your transformations
     transform = Compose([
-        Resize((256, 256)),
+        Resize((img_size, img_size)),
         ToTensor()
         # transforms.Normalize(mean=[0.5], std=[0.5])  # 标准化到[-1, 1]
     ])
@@ -89,13 +125,13 @@ if __name__ == "__main__":
     train_dataset, val_dataset, test_dataset = random_split(full_dataset, [train_size, val_size, test_size])
 
     batch_size = args.batch_size
-    train_dataloader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
-    val_dataloader = DataLoader(val_dataset, batch_size=batch_size, shuffle=True)
-    test_dataloader = DataLoader(test_dataset, batch_size=batch_size, shuffle=True)
+    train_dataloader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=8)
+    val_dataloader = DataLoader(val_dataset, batch_size=batch_size, shuffle=True, num_workers=8)
+    test_dataloader = DataLoader(test_dataset, batch_size=batch_size, shuffle=True, num_workers=8)
 
     # Optimizers
-    gen_optimizer = torch.optim.Adam(generator.parameters(), lr=args.lr, betas=(args.beta1, args.beta2))
-    disc_optimizer = torch.optim.Adam(discriminator.parameters(), lr=args.lr, betas=(args.beta1, args.beta2))
+    gen_optimizer = torch.optim.Adam(generator.parameters(), lr=args.lr)
+    disc_optimizer = torch.optim.Adam(discriminator.parameters(), lr=args.lr)
 
     #Start training
     batches_done=0
@@ -104,6 +140,7 @@ if __name__ == "__main__":
     total_gene_loss = []
     total_mse_trian = []
     total_mse_val = []
+    best_mse = 999999
     image_total_size = img_size*img_size
     for epoch in range(num_epochs):
 
@@ -121,23 +158,26 @@ if __name__ == "__main__":
             cbct = cbct.to(device)
             ct = ct.to(device)
 
-            """
-            Train discriminator
-            """
-            disc_optimizer.zero_grad()
             # 真实图像的标签为1
             valid = torch.ones(ct.size(0), 1).to(device)
             # 生成图像的标签为0
             fake = torch.zeros(ct.size(0), 1).to(device)
+
+            """
+            Train discriminator
+            """
             # 生成器生成图像
             z = torch.randn(ct.size(0), latent_dim).to(device)
+            # 生成器生成图像并将其输入判别器
             gen_images = generator(z, cbct)
+            # 清空梯度
+            disc_optimizer.zero_grad()
             # 判别器对真实图像的损失
             real_loss = criterion(discriminator(ct), valid)
             # 判别器对生成图像的损失
             fake_loss = criterion(discriminator(gen_images.detach()), fake)
             # 判别器总损失
-            disc_loss = 0.5 * (real_loss + fake_loss)
+            disc_loss = 0.5*(real_loss + fake_loss)
 
             disc_loss.backward()
             disc_optimizer.step()
@@ -147,13 +187,12 @@ if __name__ == "__main__":
             """
             gen_optimizer.zero_grad()
 
-            # 生成器生成图像并将其输入判别器
-            gen_images = generator(z, cbct)
             gen_loss = criterion(discriminator(gen_images), valid)
 
             gen_loss.backward()
             gen_optimizer.step()
 
+            print(disc_loss)
             disc_loss_list.append(disc_loss.cpu().detach().numpy())
             gene_loss_list.append(gen_loss.cpu().detach().numpy())
 
@@ -188,7 +227,9 @@ if __name__ == "__main__":
         total_mse_trian.append(avg_mse)
 
         # 打印训练信息，包括SSIM、MSE、MAE和PSNR
-        print(f"Epoch [{epoch + 1}/{num_epochs}] | d_loss: {avg_disc_loss:.4f} | g_loss: {avg_gene_loss:.4f} | SSIM: {avg_ssim:.4f} | MSE: {avg_mse:.4f} | MAE: {avg_mae:.4f} | PSNR: {avg_psnr:.4f}")
+        train_log_info = f"Epoch [{epoch + 1}/{num_epochs}] | d_loss: {avg_disc_loss:.4f} | g_loss: {avg_gene_loss:.4f} | SSIM: {avg_ssim:.4f} | MSE: {avg_mse:.4f} | MAE: {avg_mae:.4f} | PSNR: {avg_psnr:.4f}"
+        print(train_log_info)
+        train_logger.info(train_log_info)
 
         """
         validate part
@@ -225,18 +266,21 @@ if __name__ == "__main__":
                     psnr_value = cv2.PSNR(ct_image, gen_image)
                     # 添加到对应list中
                     ssim_list_val.append(ssim_value)
-                    mse_list_val.append(mse_value)/(image_total_size)
+                    mse_list_val.append(mse_value)
                     mae_list_val.append(mae_value)
                     psnr_list_val.append(psnr_value)
 
             avg_val_ssim = np.mean(ssim_list_val)
-            avg_val_mse = np.mean(mse_list_val)
+            avg_val_mse = np.mean(mse_list_val)/(image_total_size)
             avg_val_mae = np.mean(mae_list_val)
             avg_val_psnr = np.mean(psnr_list_val)
             # 打印训练和验证信息，包括SSIM、MSE、MAE和PSNR
-            print(f"Epoch [{epoch + 1}/{num_epochs}] | Validation SSIM: {avg_val_ssim:.4f} | Validation MSE: {avg_val_mse:.4f} | Validation MAE: {avg_val_mae:.4f} | Validation PSNR: {avg_val_psnr:.4f}")
+            val_log_info = f"Epoch [{epoch + 1}/{num_epochs}] | Validation SSIM: {avg_val_ssim:.4f} | Validation MSE: {avg_val_mse:.4f} | Validation MAE: {avg_val_mae:.4f} | Validation PSNR: {avg_val_psnr:.4f}"
+            print(val_log_info)
+            val_logger.info(val_log_info)
 
-        # 保存生成器模型
-        # if 
-        #     torch.save(generator.state_dict(), './models/generator.pth')
-        #     torch.save(discriminator.state_dict(), './models/discriminator.pth')
+            # 保存模型
+            if avg_val_mse <best_mse:
+                best_mse = avg_val_mse
+                torch.save(generator.state_dict(), './models/generator_mse.pth')
+                torch.save(discriminator.state_dict(), './models/discriminator_mse.pth')
